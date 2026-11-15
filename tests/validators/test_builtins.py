@@ -106,6 +106,133 @@ class TestXsd10BuiltinTypes(unittest.TestCase):
         self.assertEqual(decimal_type.encode(' 1000.0001  \n'), '1000.0001')
         self.assertEqual(decimal_type.encode(1000.01), '1000.01')
 
+    def test_decimal_encode(self):
+        decimal_type = self.types['decimal']
+
+        # Ordinary magnitudes are encoded with the same lexical form of v4.3.2
+        self.assertEqual(decimal_type.encode(-99.09), '-99.09')
+        self.assertEqual(decimal_type.encode(1000.01), '1000.01')
+        self.assertEqual(decimal_type.encode(12.5), '12.5')
+        self.assertEqual(decimal_type.encode(1000), '1000')
+        self.assertEqual(decimal_type.encode(0), '0')
+        self.assertEqual(decimal_type.encode(Decimal('-99.09')), '-99.09')
+        self.assertEqual(decimal_type.encode(Decimal('12.50')), '12.50')
+        self.assertEqual(decimal_type.encode(Decimal('1.000')), '1.000')
+
+        # The lexical form must be admitted by the type itself (no exponent)
+        for value in (1e-10, -1e-10, 1e20, -1e20, 1e-7, 1e16, 5e-324, 1e308):
+            text = decimal_type.encode(value)
+            self.assertNotIn('e', text)
+            self.assertNotIn('E', text)
+            self.assertTrue(decimal_type.is_valid(text), msg=f"invalid encoded {text!r}")
+
+    def test_decimal_encode_extreme_values(self):
+        decimal_type = self.types['decimal']
+
+        # Extreme magnitudes, both signs, with fixed-point notation and
+        # round-trip equality of the decoded value
+        test_values = [
+            1e-10, -1e-10, 1e20, -1e20, 1e-7, -1e-7, 1e-5, -1e-5,
+            1e16, -1e16, 5e-324, -5e-324, 1e308, -1e308, 1.7976931348623157e308,
+            Decimal('1E-10'), Decimal('-1E-10'), Decimal('1E+20'), Decimal('-1E+20'),
+            Decimal('1.2345678901234567890123456789E-30'),
+            Decimal('-1.2345678901234567890123456789E+30'),
+        ]
+        for value in test_values:
+            text = decimal_type.encode(value)
+            self.assertNotIn('e', text)
+            self.assertNotIn('E', text)
+            self.assertTrue(decimal_type.is_valid(text))
+
+            decoded = decimal_type.decode(text)
+            self.assertIsInstance(decoded, Decimal)
+            self.assertEqual(decoded, Decimal(str(value)))
+            self.assertEqual(decoded.is_signed(), Decimal(str(value)).is_signed())
+
+    def test_decimal_encode_negative_zero(self):
+        decimal_type = self.types['decimal']
+
+        self.assertEqual(decimal_type.encode(-0.0), '-0.0')
+        self.assertEqual(decimal_type.encode(0.0), '0.0')
+        self.assertEqual(decimal_type.encode(Decimal('-0')), '-0')
+        self.assertEqual(decimal_type.encode(Decimal('-0.00')), '-0.00')
+        self.assertEqual(decimal_type.encode(Decimal('-0E-7')), '-0.0000000')
+        self.assertEqual(decimal_type.encode(Decimal('0E+3')), '0')
+
+        # The sign of negative zero survives a decode/encode round-trip
+        for value in (-0.0, Decimal('-0'), Decimal('-0E-7')):
+            text = decimal_type.encode(value)
+            decoded = decimal_type.decode(text)
+            self.assertTrue(decoded.is_signed(), msg=f"lost negative zero for {value!r}")
+            self.assertEqual(decimal_type.encode(decoded), text)
+
+    def test_decimal_encode_significant_digits(self):
+        decimal_type = self.types['decimal']
+
+        # Decimal values are encoded exactly: scale and significant digits
+        # are preserved, no rounding is applied to the source value
+        cases = [
+            (Decimal('1.000'), '1.000'),
+            (Decimal('100.00'), '100.00'),
+            (Decimal('0.000012300'), '0.000012300'),
+            (Decimal('1.2300E-5'), '0.000012300'),
+            (Decimal('1.2300E+3'), '1230.0'),
+            (Decimal('123456789012345678901234567890.123456789'),
+             '123456789012345678901234567890.123456789'),
+        ]
+        for value, expected in cases:
+            self.assertEqual(decimal_type.encode(value), expected)
+            self.assertEqual(decimal_type.decode(expected), value)
+
+        # float values are expanded from their shortest round-trip representation
+        self.assertEqual(decimal_type.encode(1e-10), '0.0000000001')
+        self.assertEqual(decimal_type.encode(-1e-10), '-0.0000000001')
+        self.assertEqual(decimal_type.encode(1e20), '100000000000000000000')
+
+    def test_decimal_encode_invalid_values(self):
+        decimal_type = self.types['decimal']
+
+        for value in (float('inf'), float('-inf'), float('nan'),
+                      Decimal('Infinity'), Decimal('-Infinity'), Decimal('NaN')):
+            self.assertRaises(XMLSchemaEncodeError, decimal_type.encode, value)
+
+    def test_numeric_types_lexical_matrix(self):
+        """Matrix of magnitude x sign x sibling numerical types."""
+        decimal_type = self.types['decimal']
+        double_type = self.types['double']
+        float_type = self.types['float']
+        integer_types = [
+            self.types[name] for name in (
+                'integer', 'long', 'int', 'short', 'byte', 'nonNegativeInteger',
+                'positiveInteger', 'nonPositiveInteger', 'negativeInteger',
+                'unsignedLong', 'unsignedInt', 'unsignedShort', 'unsignedByte',
+            )
+        ]
+
+        magnitudes = (1e-10, 1e-7, 1e-5, 0.0001, 1.5, 1e15, 1e16, 1e20, 1e308)
+        for magnitude in magnitudes:
+            for sign in (1, -1):
+                value = sign * magnitude
+                expected = format(Decimal(str(value)), 'f')
+
+                # decimal: fixed-point lexical form, self-valid and round-trip
+                text = decimal_type.encode(value)
+                self.assertEqual(text, expected)
+                self.assertNotIn('e', text)
+                self.assertNotIn('E', text)
+                self.assertTrue(decimal_type.is_valid(text))
+                self.assertEqual(decimal_type.decode(text), Decimal(str(value)))
+
+                # double and float: scientific notation output is unchanged
+                self.assertEqual(double_type.encode(value), str(value))
+                self.assertEqual(float_type.encode(value), str(value))
+
+                # integer family: float values are still rejected
+                for integer_type in integer_types:
+                    self.assertRaises(
+                        XMLSchemaEncodeError, integer_type.encode, value
+                    )
+
     def test_integer_decode(self):
         integer_type = self.types['integer']
         self.assertTrue(integer_type.decode(' 1000  \n') == 1000)

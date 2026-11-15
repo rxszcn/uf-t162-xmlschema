@@ -280,6 +280,33 @@ def python_to_boolean(value: object) -> str:
     return str(value).lower()
 
 
+def python_to_decimal(value: Union[Decimal, int, float, str]) -> str:
+    """
+    Encodes a Python value to the lexical space of xs:decimal, that admits
+    only fixed-point notation (no exponent part). Decimal values are encoded
+    exactly, preserving sign, significant digits and the scale of the source
+    value; float values are encoded using their shortest round-trip decimal
+    representation, then expanded to fixed-point notation. Values that are
+    not admitted by xs:decimal (infinite and NaN) raise an error.
+    """
+    if isinstance(value, str):
+        return value
+    elif isinstance(value, float):
+        if isnan(value) or isinf(value):
+            msg = _('{!r} is not a decimal value').format(value)
+            raise XMLSchemaValueError(msg)
+        # str() of a float is its shortest representation that round-trips
+        value = Decimal(str(float(value)))
+    else:
+        if not isinstance(value, Decimal):
+            value = Decimal(value)  # exact conversion for int/Integer values
+        elif value.is_nan() or value.is_infinite():
+            msg = _('{!r} is not a decimal value').format(value)
+            raise XMLSchemaValueError(msg)
+
+    return format(value, 'f')
+
+
 def python_to_float(value: Union[SupportsFloat, str]) -> str:
     if isinstance(value, str):
         if value in ('NaN', 'INF', '-INF'):

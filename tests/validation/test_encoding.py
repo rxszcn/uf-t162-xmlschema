@@ -131,6 +131,59 @@ class TestEncoding(XsdValidatorTestCase):
         self.check_encode(self.xsd_types['decimal'], '-99.09', '-99.09')
         self.check_encode(self.xsd_types['decimal'], decimal.Decimal('-99.09'), '-99.09')
 
+    def test_decimal_encoding_of_extreme_values(self):
+        decimal_type = self.xsd_types['decimal']
+
+        # Extreme magnitudes must be encoded with a fixed-point lexical form
+        # that is admitted by the type itself, with a lossless round-trip.
+        for value in (1e-10, -1e-10, 1e20, -1e20, 5e-324, -5e-324, 1e308, -1e308):
+            text = decimal_type.encode(value)
+            self.check_encode(decimal_type, value, text)
+            self.assertNotIn('e', text)
+            self.assertNotIn('E', text)
+            self.assertTrue(decimal_type.is_valid(text))
+            self.assertEqual(decimal_type.decode(text), decimal.Decimal(str(value)))
+
+        self.check_encode(decimal_type, 1e-10, '0.0000000001')
+        self.check_encode(decimal_type, -1e20, '-100000000000000000000')
+        self.check_encode(decimal_type, decimal.Decimal('1E-10'), '0.0000000001')
+        self.check_encode(decimal_type, decimal.Decimal('1E+20'), '100000000000000000000')
+
+        # Negative zero is preserved though the encode/decode round-trip
+        for value in (-0.0, decimal.Decimal('-0'), decimal.Decimal('-0E-7')):
+            text = decimal_type.encode(value)
+            decoded = decimal_type.decode(text)
+            self.assertTrue(decoded.is_signed(), msg=f"lost negative zero for {value!r}")
+            self.assertEqual(decimal_type.encode(decoded), text)
+
+        # Ordinary values are not changed by the new encoder
+        self.check_encode(decimal_type, 0.0001, '0.0001')
+        self.check_encode(decimal_type, 1.5, '1.5')
+        self.check_encode(decimal_type, decimal.Decimal('12.50'), '12.50')
+
+    def test_decimal_element_encoding_of_extreme_values(self):
+        schema = self.schema_class(dedent("""\
+            <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+                <xs:element name="root">
+                    <xs:complexType>
+                        <xs:sequence>
+                            <xs:element name="amount" type="xs:decimal"/>
+                        </xs:sequence>
+                    </xs:complexType>
+                </xs:element>
+            </xs:schema>"""))
+
+        for value, expected in [
+            (1e-10, '0.0000000001'),
+            (-1e-10, '-0.0000000001'),
+            (1e20, '100000000000000000000'),
+            (-1e20, '-100000000000000000000'),
+            (-0.0, '-0.0'),
+        ]:
+            root = schema.encode({'amount': value}, path='root')
+            self.assertEqual(root[0].text, expected)
+            self.assertEqual(schema.decode(root)['amount'], decimal.Decimal(expected))
+
     def test_integer_builtin_type(self):
         self.check_encode(self.xsd_types['integer'], 1000, '1000')
         self.check_encode(self.xsd_types['integer'], ' 1000', '1000', untyped_data=True)

@@ -25,8 +25,8 @@ from .helpers import decimal_validator, qname_validator, byte_validator, \
     unsigned_short_validator, unsigned_int_validator, unsigned_long_validator, \
     negative_int_validator, positive_int_validator, non_positive_int_validator, \
     non_negative_int_validator, hex_binary_validator, base64_binary_validator, \
-    error_type_validator, boolean_to_python, python_to_boolean, python_to_float, \
-    python_to_int
+    error_type_validator, boolean_to_python, python_to_boolean, python_to_decimal, \
+    python_to_float, python_to_int
 
 #
 # Admitted facets sets for XSD atomic types
@@ -90,6 +90,7 @@ XSD_COMMON_BUILTIN_TYPES: tuple[dict[str, Any], ...] = (
         'python_type': (Decimal, int, float),
         'admitted_facets': DECIMAL_FACETS,
         'to_python': datatypes.DecimalProxy,
+        'from_python': python_to_decimal,
         'facets': [decimal_validator, COLLAPSE_WHITE_SPACE_ELEMENT],
     },  # decimal number
 
